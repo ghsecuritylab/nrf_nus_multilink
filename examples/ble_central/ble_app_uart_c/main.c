@@ -85,11 +85,21 @@
 
 #define ECHOBACK_BLE_UART_DATA  1                                       /**< Echo the UART data that is received over the Nordic UART Service back to the sender. */
 
+#ifdef USE_PCA_10040_UART
+
+#define FY_CENTRAL_RXD_PIN				8
+#define FY_CENTRAL_TXD_PIN				6
+#define FY_CENTRAL_RTS_PIN				5
+#define FY_CENTRAL_CTS_PIN				7
+
+#else
 
 #define FY_CENTRAL_RXD_PIN				5
 #define FY_CENTRAL_TXD_PIN				6
 #define FY_CENTRAL_RTS_PIN				8
 #define FY_CENTRAL_CTS_PIN				7
+
+#endif
 
 #define FY_CENTRAL_LED_RED_PIN			29
 #define FY_CENTRAL_LED_BLUE_PIN			28
@@ -411,8 +421,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_LOG_DEBUG("PHY update request.");
             ble_gap_phys_t const phys =
             {
-                .rx_phys = BLE_GAP_PHY_AUTO,
-                .tx_phys = BLE_GAP_PHY_AUTO,
+                .rx_phys = BLE_GAP_PHY_2MBPS,
+                .tx_phys = BLE_GAP_PHY_2MBPS,
             };
             err_code = sd_ble_gap_phy_update(p_ble_evt->evt.gap_evt.conn_handle, &phys);
             APP_ERROR_CHECK(err_code);
@@ -604,6 +614,18 @@ static void idle_state_handle(void)
 }
 
 
+void conn_evt_len_ext_set(bool status)
+{
+    ret_code_t err_code;
+    ble_opt_t  opt;
+
+    memset(&opt, 0x00, sizeof(opt));
+    opt.common_opt.conn_evt_ext.enable = status ? 1 : 0;
+
+    err_code = sd_ble_opt_set(BLE_COMMON_OPT_CONN_EVT_EXT, &opt);
+    APP_ERROR_CHECK(err_code);
+}
+
 int main(void)
 {
     // Initialize.
@@ -618,7 +640,8 @@ int main(void)
     nus_c_init();
 	
 	d_flash_init();
-
+	conn_evt_len_ext_set(true);
+	
 	d_flash_read((uint32_t)d_flash_get_data_store_addr(), addr_temp, 6);
 	d_flash_read((uint32_t)d_flash_get_data_store_addr(), save_addr, 6);
 	
