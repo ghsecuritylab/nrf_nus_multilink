@@ -89,8 +89,8 @@
 #define SCAN_DURATION           0x0000                                  /**< Timout when scanning. 0x0000 disables timeout. */
 
 #define MIN_CONNECTION_INTERVAL MSEC_TO_UNITS(7.5, UNIT_1_25_MS)         /**< Determines minimum connection interval in millisecond. */
-#define MAX_CONNECTION_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)         /**< Determines maximum connection interval in millisecond. */
-#define SLAVE_LATENCY           0                                       /**< Determines slave latency in counts of connection events. */
+#define MAX_CONNECTION_INTERVAL MSEC_TO_UNITS(50, UNIT_1_25_MS)         /**< Determines maximum connection interval in millisecond. */
+#define SLAVE_LATENCY           0                                        /**< Determines slave latency in counts of connection events. */
 #define SUPERVISION_TIMEOUT     MSEC_TO_UNITS(4000, UNIT_10_MS)         /**< Determines supervision time-out in units of 10 millisecond. */
 
 #define ECHOBACK_BLE_UART_DATA  1                                       /**< Echo the UART data that is received over the Nordic UART Service back to the sender. */
@@ -121,6 +121,10 @@ BLE_DB_DISCOVERY_ARRAY_DEF(m_db_disc, NRF_SDH_BLE_CENTRAL_LINK_COUNT);
 APP_TIMER_DEF(spam_timer);
 uint32_t handle_0_counter = 0;
 uint32_t handle_1_counter = 0;
+uint32_t handle_2_counter = 0;
+uint32_t handle_3_counter = 0;
+
+uint16_t 	conn_handle_map;
 
 static char const m_target_periph_name[] = "BICQ_LD3";             /**< Name of the device we try to connect to. This name is searched for in the scan report data*/
 
@@ -233,15 +237,21 @@ void uart_event_handle(app_uart_evt_t * p_event)
             if ((data_array[index - 2] == 0x03 && data_array[index - 1] == 0x04 )
 				|| (index >= (m_ble_nus_max_data_len)))
             {
-//                do
-//                {
-//                    ret_val = ble_nus_c_string_send(&m_ble_nus_c, data_array, index);
-//                    if ( (ret_val != NRF_ERROR_INVALID_STATE) && (ret_val != NRF_ERROR_BUSY) )
-//                    {
-//                        APP_ERROR_CHECK(ret_val);
-//                    }
-//                } while (ret_val == NRF_ERROR_BUSY);
-
+				for(int i = 0; i < NRF_SDH_BLE_CENTRAL_LINK_COUNT; i++)
+				{
+					if(IS_SET(conn_handle_map, i))
+					{
+						do
+						{
+							ret_val = ble_nus_c_string_send(&m_ble_nus_c[i], data_array, index);
+							if ( (ret_val != NRF_ERROR_INVALID_STATE) && (ret_val != NRF_ERROR_BUSY) )
+							{
+								APP_ERROR_CHECK(ret_val);
+							}
+						} while (ret_val == NRF_ERROR_BUSY);
+					}
+				}
+                
                 index = 0;
             }
             break;
@@ -272,12 +282,22 @@ static void ble_nus_chars_received_uart_print(uint8_t * p_data, uint16_t data_le
 {
   	if(conn_handle == 0x00)
 	{
-		handle_0_counter++;
+		handle_0_counter += data_len;
 	}
 	
 	if(conn_handle == 0x01)
 	{
-		handle_1_counter++;
+		handle_1_counter += data_len;
+	}
+	
+	if(conn_handle == 0x02)
+	{
+		handle_2_counter += data_len;
+	}
+	
+	if(conn_handle == 0x03)
+	{
+		handle_3_counter += data_len;
 	}
 }
 
@@ -333,6 +353,7 @@ static void ble_nus_c_evt_handler(ble_nus_c_t * p_ble_nus_c, ble_nus_c_evt_t con
             break;
 
         case BLE_NUS_C_EVT_DISCONNECTED:
+			
             NRF_LOG_INFO("Disconnected.");
             break;
     }
@@ -403,7 +424,10 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             {
                 APP_ERROR_CHECK(err_code);
             }
-
+			//Set the specified bit ib connection map 
+			conn_handle_map |= 1<<p_gap_evt->conn_handle;
+			NRF_LOG_INFO("conn_handle_map = %d", conn_handle_map);
+			
             // Update LEDs status, and check if we should be looking for more
             // peripherals to connect to.
             bsp_board_led_on(CENTRAL_CONNECTED_LED);
@@ -425,19 +449,19 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         // the LEDs status and start scanning again.
         case BLE_GAP_EVT_DISCONNECTED:
         {
-            NRF_LOG_INFO("LBS central link 0x%x disconnected (reason: 0x%x)",
+            NRF_LOG_INFO("NUS central link 0x%x disconnected (reason: 0x%x)",
                          p_gap_evt->conn_handle,
                          p_gap_evt->params.disconnected.reason);
 
             if (ble_conn_state_central_conn_count() == 0)
             {
-                err_code = app_button_disable();
-                APP_ERROR_CHECK(err_code);
 
                 // Turn off connection indication LED
                 bsp_board_led_off(CENTRAL_CONNECTED_LED);
             }
-
+			//Clear the specified bit ib connection map 
+			conn_handle_map &= ~(1<<p_gap_evt->conn_handle);
+			NRF_LOG_INFO("disconnect conn_handle_map = %d", conn_handle_map);
             // Start scanning
             scan_start();
 
@@ -652,9 +676,11 @@ static void ble_stack_init(void)
 
 void spam_timer_handler(void * p_context)
 {
-	NRF_LOG_INFO("%d %d", handle_0_counter, handle_1_counter);
+	NRF_LOG_INFO("%d %d %d %d", handle_0_counter, handle_1_counter, handle_2_counter, handle_3_counter);
 	handle_0_counter = 0;
 	handle_1_counter = 0;
+	handle_2_counter = 0;
+	handle_3_counter = 0;
 }
 
 void spam_timer_init(void)
@@ -679,6 +705,7 @@ int main(void)
 	nus_c_init();
     ble_conn_state_init();
 	spam_timer_init();
+	conn_evt_len_ext_set(true);
     // Start execution.
     NRF_LOG_INFO(" example started.");
     scan_start();
